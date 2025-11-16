@@ -1,7 +1,7 @@
 import { collections } from "$lib/server/database";
 import { MetricsServer } from "$lib/server/metrics";
 import { error } from "@sveltejs/kit";
-import { ObjectId } from "mongodb";
+import { ObjectId } from "$lib/types/ObjectId";
 import { authCondition } from "$lib/server/auth";
 
 /**

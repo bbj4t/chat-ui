@@ -1,7 +1,7 @@
 import type { Message } from "$lib/types/Message";
 import type { EndpointMessage } from "./endpoints";
 import { downloadFile } from "../files/downloadFile";
-import type { ObjectId } from "mongodb";
+import type { ObjectId } from "$lib/types/ObjectId";
 
 export async function preprocessMessages(
 	messages: Message[],

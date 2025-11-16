@@ -1,21 +1,52 @@
 # For development only
-# Set MONGODB_URL=mongodb://localhost:27017 in .env.local to use this container
+# This configuration uses Neon PostgreSQL for the database backend
 services:
-  mongo:
-    image: mongo:8
-    hostname: mongodb
+  chat-ui:
+    build: .
     ports:
-      - ${LOCAL_MONGO_PORT:-27017}:27017
-    command: --replSet rs0 --bind_ip_all #--setParameter notablescan=1
-    mem_limit: "5g"
-    mem_reservation: "3g"
-    healthcheck:
-      # need to specify the hostname here because the default is the container name, and we run the app outside of docker
-      test: test $$(mongosh --quiet --eval 'try {rs.status().ok} catch(e) {rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:${LOCAL_MONGO_PORT:-27017}"}]}).ok}') -eq 1
-      interval: 5s
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://neondb_owner:npg_8xHhNa3djgCD@ep-rough-term-ahyldri0-pooler.c-3.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://router.huggingface.co/v1}
+      - PUBLIC_APP_NAME=${PUBLIC_APP_NAME:-ChatUI}
+      - PUBLIC_APP_ASSETS=${PUBLIC_APP_ASSETS:-chatui}
+      - COOKIE_NAME=${COOKIE_NAME:-hf-chat}
+      - ENABLE_CONFIG_MANAGER=${ENABLE_CONFIG_MANAGER:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
-      - mongodb-data:/data/db
-    restart: always
+      - ./src:/app/src:ro
+      - ./static:/app/static:ro
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    networks:
+      - chat-network
+
+  postgres:
+    image: postgres:16-alpine
+    hostname: postgres
+    ports:
+      - "${LOCAL_POSTGRES_PORT:-5432}:5432"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-chat_ui}
+      - POSTGRES_USER=${POSTGRES_USER:-chat_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-chat_password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chat_user} -d ${POSTGRES_DB:-chat_ui}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - chat-network
+
+networks:
+  chat-network:
+    driver: bridge
 
 volumes:
-  mongodb-data:
+  postgres-data:

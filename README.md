@@ -17,6 +17,9 @@ A chat interface for LLMs. It is a SvelteKit app and it powers the [HuggingChat 
 > [!NOTE]
 > The old version is still available on the [legacy branch](https://github.com/huggingface/chat-ui/tree/legacy)
 
+> [!TIP]
+> **PostgreSQL Support**: Chat UI now supports PostgreSQL (including Neon Database) in addition to MongoDB! See the [PostgreSQL Migration Guide](./POSTGRESQL_MIGRATION.md) for setup instructions, [Messaging Agents Guide](./MESSAGING_AGENTS.md) for automated bot integrations (Telegram, Instagram, WhatsApp), and [Implementation Summary](./IMPLEMENTATION_SUMMARY.md) for technical details.
+
 ## Quickstart
 
 Chat UI speaks to OpenAI-compatible APIs only. The fastest way to get running is with the Hugging Face Inference Providers router plus your personal Hugging Face access token.
@@ -42,7 +45,7 @@ MONGODB_URL=
 
 Check the root [`.env` template](./.env) for the full list of optional variables you can override.
 
-**Step 2 – Choose where MongoDB lives:** Either provision a managed cluster (for example MongoDB Atlas) or run a local container. Both approaches are described in [Database Options](#database-options). After you have the URI, drop it into `MONGODB_URL` (and, if desired, set `MONGODB_DB_NAME`).
+**Step 2 – Choose your database:** Chat UI now supports both MongoDB and PostgreSQL. For PostgreSQL (including Neon), see [PostgreSQL Migration Guide](./POSTGRESQL_MIGRATION.md). For MongoDB, either provision a managed cluster (for example MongoDB Atlas) or run a local container. Both approaches are described in [Database Options](#database-options). After you have the URI, drop it into `MONGODB_URL` (for MongoDB) or `DATABASE_URL` (for PostgreSQL).
 
 **Step 3 – Install and launch the dev server:**
 

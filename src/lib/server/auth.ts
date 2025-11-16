@@ -14,7 +14,6 @@ import { redirect, type Cookies } from "@sveltejs/kit";
 import { collections } from "$lib/server/database";
 import JSON5 from "json5";
 import { logger } from "$lib/server/logger";
-import { ObjectId } from "mongodb";
 import type { Cookie } from "elysia";
 import { adminTokenManager } from "./adminToken";
 import type { User } from "$lib/types/User";
@@ -397,7 +396,7 @@ export async function authenticateRequest(
 		secretSessionId = sessionId = await sha256(email);
 		return {
 			user: {
-				_id: new ObjectId(sessionId.slice(0, 24)),
+				_id: sessionId.slice(0, 36), // Use first 36 chars as UUID-like ID
 				name: email,
 				email,
 				createdAt: new Date(),
