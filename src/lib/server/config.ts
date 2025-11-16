@@ -1,9 +1,6 @@
 import { env as publicEnv } from "$env/dynamic/public";
 import { env as serverEnv } from "$env/dynamic/private";
 import { building } from "$app/environment";
-import type { Collection } from "mongodb";
-import type { ConfigKey as ConfigKeyType } from "$lib/types/ConfigKey";
-import type { Semaphore } from "$lib/types/Semaphore";
 import { Semaphores } from "$lib/types/Semaphore";
 
 export type PublicConfigKey = keyof typeof publicEnv;
@@ -14,8 +11,10 @@ class ConfigManager {
 	private keysFromDB: Partial<Record<ConfigKey, string>> = {};
 	private isInitialized = false;
 
-	private configCollection: Collection<ConfigKeyType> | undefined;
-	private semaphoreCollection: Collection<Semaphore> | undefined;
+	/* eslint-disable @typescript-eslint/no-explicit-any */
+	private configCollection: any;
+	private semaphoreCollection: any;
+	/* eslint-enable @typescript-eslint/no-explicit-any */
 	private lastConfigUpdate: Date | undefined;
 
 	async init() {
@@ -63,8 +62,8 @@ class ConfigManager {
 	}
 
 	async updateConfig() {
-		const configs = (await this.configCollection?.find({}).toArray()) ?? [];
-		this.keysFromDB = configs.reduce(
+		const configs = (await this.configCollection?.find({})) ?? [];
+		this.keysFromDB = configs.reduce<Record<ConfigKey, string>>(
 			(acc, curr) => {
 				acc[curr.key as ConfigKey] = curr.value;
 				return acc;
@@ -158,7 +157,9 @@ type ExtraConfigKeys =
 	| "METRICS_ENABLED"
 	| "METRICS_PORT"
 	| "MCP_SERVERS"
-	| "MCP_FORWARD_HF_USER_TOKEN";
+	| "MCP_FORWARD_HF_USER_TOKEN"
+	| "DATABASE_URL"
+	| "DATABASE_DB_NAME";
 
 type ConfigProxy = ConfigManager & { [K in ConfigKey | ExtraConfigKeys]: string };
 

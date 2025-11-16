@@ -1,4 +1,4 @@
-import { GridFSBucket, MongoClient } from "mongodb";
+import { Pool } from "pg";
 import type { Conversation } from "$lib/types/Conversation";
 import type { SharedConversation } from "$lib/types/SharedConversation";
 import type { AbortedGeneration } from "$lib/types/AbortedGeneration";
@@ -12,64 +12,46 @@ import type { ConversationStats } from "$lib/types/ConversationStats";
 import type { MigrationResult } from "$lib/types/MigrationResult";
 import type { Semaphore } from "$lib/types/Semaphore";
 import type { AssistantStats } from "$lib/types/AssistantStats";
-import { MongoMemoryServer } from "mongodb-memory-server";
 import { logger } from "$lib/server/logger";
 import { building } from "$app/environment";
 import type { TokenCache } from "$lib/types/TokenCache";
 import { onExit } from "./exitHandler";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
-import { existsSync, mkdirSync } from "fs";
-import { findRepoRoot } from "./findRepoRoot";
 import type { ConfigKey } from "$lib/types/ConfigKey";
 import { config } from "$lib/server/config";
+import type { FindOptions, UpdateOptions, MongoFilter, UpdateQuery } from "./database-types";
 
-export const CONVERSATION_STATS_COLLECTION = "conversations.stats";
+export const CONVERSATION_STATS_COLLECTION = "conversation_stats";
 
 export class Database {
-	private client?: MongoClient;
-	private mongoServer?: MongoMemoryServer;
+	private pool?: Pool;
 
 	private static instance: Database;
 
 	private async init() {
-		const DB_FOLDER =
-			config.MONGO_STORAGE_PATH ||
-			join(findRepoRoot(dirname(fileURLToPath(import.meta.url))), "db");
+		const databaseUrl =
+			config.DATABASE_URL ||
+			process.env.DATABASE_URL ||
+			"postgresql://chat_user:chat_password@localhost:5432/chat_ui";
 
-		if (!config.MONGODB_URL) {
-			logger.warn("No MongoDB URL found, using in-memory server");
-
-			logger.info(`Using database path: ${DB_FOLDER}`);
-			// Create db directory if it doesn't exist
-			if (!existsSync(DB_FOLDER)) {
-				logger.info(`Creating database directory at ${DB_FOLDER}`);
-				mkdirSync(DB_FOLDER, { recursive: true });
-			}
-
-			this.mongoServer = await MongoMemoryServer.create({
-				instance: {
-					dbName: config.MONGODB_DB_NAME + (import.meta.env.MODE === "test" ? "-test" : ""),
-					dbPath: DB_FOLDER,
-				},
-				binary: {
-					version: "7.0.18",
-				},
-			});
-			this.client = new MongoClient(this.mongoServer.getUri(), {
-				directConnection: config.MONGODB_DIRECT_CONNECTION === "true",
-			});
-		} else {
-			this.client = new MongoClient(config.MONGODB_URL, {
-				directConnection: config.MONGODB_DIRECT_CONNECTION === "true",
-			});
+		if (!databaseUrl) {
+			logger.error("No DATABASE_URL found in configuration");
+			process.exit(1);
 		}
 
 		try {
-			logger.info("Connecting to database");
-			await this.client.connect();
-			logger.info("Connected to database");
-			this.client.db(config.MONGODB_DB_NAME + (import.meta.env.MODE === "test" ? "-test" : ""));
+			logger.info("Connecting to PostgreSQL database");
+			this.pool = new Pool({
+				connectionString: databaseUrl,
+				max: 20, // Maximum number of clients in the pool
+				idleTimeoutMillis: 30000,
+				connectionTimeoutMillis: 10000,
+			});
+
+			// Test the connection
+			const client = await this.pool.connect();
+			logger.info("Connected to PostgreSQL database");
+			client.release();
+
 			await this.initDatabase();
 		} catch (err) {
 			logger.error(err, "Connection error");
@@ -79,8 +61,7 @@ export class Database {
 		// Disconnect DB on exit
 		onExit(async () => {
 			logger.info("Closing database connection");
-			await this.client?.close(true);
-			await this.mongoServer?.stop();
+			await this.pool?.end();
 		});
 	}
 
@@ -94,200 +75,413 @@ export class Database {
 	}
 
 	/**
-	 * Return mongoClient
+	 * Return postgres pool
 	 */
-	public getClient(): MongoClient {
-		if (!this.client) {
+	public getPool(): Pool {
+		if (!this.pool) {
 			throw new Error("Database not initialized");
 		}
 
-		return this.client;
+		return this.pool;
 	}
 
 	/**
-	 * Return map of database's collections
+	 * Return map of database's collections (PostgreSQL adapter)
 	 */
 	public getCollections() {
-		if (!this.client) {
+		if (!this.pool) {
 			throw new Error("Database not initialized");
 		}
 
-		const db = this.client.db(
-			config.MONGODB_DB_NAME + (import.meta.env.MODE === "test" ? "-test" : "")
-		);
-
-		const conversations = db.collection<Conversation>("conversations");
-		const conversationStats = db.collection<ConversationStats>(CONVERSATION_STATS_COLLECTION);
-		const assistants = db.collection<Assistant>("assistants");
-		const assistantStats = db.collection<AssistantStats>("assistants.stats");
-		const reports = db.collection<Report>("reports");
-		const sharedConversations = db.collection<SharedConversation>("sharedConversations");
-		const abortedGenerations = db.collection<AbortedGeneration>("abortedGenerations");
-		const settings = db.collection<Settings>("settings");
-		const users = db.collection<User>("users");
-		const sessions = db.collection<Session>("sessions");
-		const messageEvents = db.collection<MessageEvent>("messageEvents");
-		const bucket = new GridFSBucket(db, { bucketName: "files" });
-		const migrationResults = db.collection<MigrationResult>("migrationResults");
-		const semaphores = db.collection<Semaphore>("semaphores");
-		const tokenCaches = db.collection<TokenCache>("tokens");
-		const tools = db.collection("tools");
-		const configCollection = db.collection<ConfigKey>("config");
-
 		return {
-			conversations,
-			conversationStats,
-			assistants,
-			assistantStats,
-			reports,
-			sharedConversations,
-			abortedGenerations,
-			settings,
-			users,
-			sessions,
-			messageEvents,
-			bucket,
-			migrationResults,
-			semaphores,
-			tokenCaches,
-			tools,
-			config: configCollection,
+			conversations: new PostgresCollection<Conversation>(this.pool, "conversations"),
+			conversationStats: new PostgresCollection<ConversationStats>(
+				this.pool,
+				CONVERSATION_STATS_COLLECTION
+			),
+			assistants: new PostgresCollection<Assistant>(this.pool, "assistants"),
+			assistantStats: new PostgresCollection<AssistantStats>(this.pool, "assistant_stats"),
+			reports: new PostgresCollection<Report>(this.pool, "reports"),
+			sharedConversations: new PostgresCollection<SharedConversation>(
+				this.pool,
+				"shared_conversations"
+			),
+			abortedGenerations: new PostgresCollection<AbortedGeneration>(
+				this.pool,
+				"aborted_generations"
+			),
+			settings: new PostgresCollection<Settings>(this.pool, "settings"),
+			users: new PostgresCollection<User>(this.pool, "users"),
+			sessions: new PostgresCollection<Session>(this.pool, "sessions"),
+			messageEvents: new PostgresCollection<MessageEvent>(this.pool, "message_events"),
+			bucket: new PostgresFileBucket(this.pool),
+			migrationResults: new PostgresCollection<MigrationResult>(this.pool, "migration_results"),
+			semaphores: new PostgresCollection<Semaphore>(this.pool, "semaphores"),
+			tokenCaches: new PostgresCollection<TokenCache>(this.pool, "token_caches"),
+			tools: new PostgresCollection(this.pool, "tools"),
+			config: new PostgresCollection<ConfigKey>(this.pool, "config"),
+			messagingAgents: new PostgresCollection(this.pool, "messaging_agents"),
+			agentLogs: new PostgresCollection(this.pool, "agent_logs"),
 		};
 	}
 
 	/**
-	 * Init database once connected: Index creation
+	 * Init database once connected: Index creation (already handled by init-db.sql)
 	 * @private
 	 */
-	private initDatabase() {
-		const {
-			conversations,
-			conversationStats,
-			assistants,
-			assistantStats,
-			reports,
-			sharedConversations,
-			abortedGenerations,
-			settings,
-			users,
-			sessions,
-			messageEvents,
-			semaphores,
-			tokenCaches,
-			config,
-		} = this.getCollections();
+	private async initDatabase() {
+		logger.info("Database schema should be initialized via init-db.sql script");
+		// Indexes are created in the SQL initialization script
+		// This method is kept for compatibility but doesn't need to do anything
+		// since PostgreSQL schema is managed via SQL migrations
+	}
+}
 
-		conversations
-			.createIndex(
-				{ sessionId: 1, updatedAt: -1 },
-				{ partialFilterExpression: { sessionId: { $exists: true } } }
-			)
-			.catch((e) => logger.error(e));
-		conversations
-			.createIndex(
-				{ userId: 1, updatedAt: -1 },
-				{ partialFilterExpression: { userId: { $exists: true } } }
-			)
-			.catch((e) => logger.error(e));
-		conversations
-			.createIndex(
-				{ "message.id": 1, "message.ancestors": 1 },
-				{ partialFilterExpression: { userId: { $exists: true } } }
-			)
-			.catch((e) => logger.error(e));
-		// Not strictly necessary, could use _id, but more convenient. Also for stats
-		// To do stats on conversation messages
-		conversations
-			.createIndex({ "messages.createdAt": 1 }, { sparse: true })
-			.catch((e) => logger.error(e));
-		// Unique index for stats
-		conversationStats
-			.createIndex(
-				{
-					type: 1,
-					"date.field": 1,
-					"date.span": 1,
-					"date.at": 1,
-					distinct: 1,
-				},
-				{ unique: true }
-			)
-			.catch((e) => logger.error(e));
-		// Allow easy check of last computed stat for given type/dateField
-		conversationStats
-			.createIndex({
-				type: 1,
-				"date.field": 1,
-				"date.at": 1,
-			})
-			.catch((e) => logger.error(e));
-		abortedGenerations
-			.createIndex({ updatedAt: 1 }, { expireAfterSeconds: 30 })
-			.catch((e) => logger.error(e));
-		abortedGenerations
-			.createIndex({ conversationId: 1 }, { unique: true })
-			.catch((e) => logger.error(e));
-		sharedConversations.createIndex({ hash: 1 }, { unique: true }).catch((e) => logger.error(e));
-		settings
-			.createIndex({ sessionId: 1 }, { unique: true, sparse: true })
-			.catch((e) => logger.error(e));
-		settings
-			.createIndex({ userId: 1 }, { unique: true, sparse: true })
-			.catch((e) => logger.error(e));
-		settings.createIndex({ assistants: 1 }).catch((e) => logger.error(e));
-		users.createIndex({ hfUserId: 1 }, { unique: true }).catch((e) => logger.error(e));
-		users
-			.createIndex({ sessionId: 1 }, { unique: true, sparse: true })
-			.catch((e) => logger.error(e));
-		// No unicity because due to renames & outdated info from oauth provider, there may be the same username on different users
-		users.createIndex({ username: 1 }).catch((e) => logger.error(e));
-		messageEvents
-			.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 1 })
-			.catch((e) => logger.error(e));
-		sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }).catch((e) => logger.error(e));
-		sessions.createIndex({ sessionId: 1 }, { unique: true }).catch((e) => logger.error(e));
-		assistants.createIndex({ createdById: 1, userCount: -1 }).catch((e) => logger.error(e));
-		assistants.createIndex({ userCount: 1 }).catch((e) => logger.error(e));
-		assistants.createIndex({ review: 1, userCount: -1 }).catch((e) => logger.error(e));
-		assistants.createIndex({ modelId: 1, userCount: -1 }).catch((e) => logger.error(e));
-		assistants.createIndex({ searchTokens: 1 }).catch((e) => logger.error(e));
-		assistants.createIndex({ last24HoursCount: 1 }).catch((e) => logger.error(e));
-		assistants
-			.createIndex({ last24HoursUseCount: -1, useCount: -1, _id: 1 })
-			.catch((e) => logger.error(e));
-		assistantStats
-			// Order of keys is important for the queries
-			.createIndex({ "date.span": 1, "date.at": 1, assistantId: 1 }, { unique: true })
-			.catch((e) => logger.error(e));
-		reports.createIndex({ assistantId: 1 }).catch((e) => logger.error(e));
-		reports.createIndex({ createdBy: 1, assistantId: 1 }).catch((e) => logger.error(e));
+/**
+ * PostgreSQL Collection Adapter to mimic MongoDB collection interface
+ */
+export class PostgresCollection<T = Record<string, unknown>> {
+	constructor(
+		private pool: Pool,
+		private tableName: string
+	) {}
 
-		// Unique index for semaphore and migration results
-		semaphores.createIndex({ key: 1 }, { unique: true }).catch((e) => logger.error(e));
-		semaphores
-			.createIndex({ deleteAt: 1 }, { expireAfterSeconds: 1 })
-			.catch((e) => logger.error(e));
-		tokenCaches
-			.createIndex({ createdAt: 1 }, { expireAfterSeconds: 5 * 60 })
-			.catch((e) => logger.error(e));
-		tokenCaches.createIndex({ tokenHash: 1 }).catch((e) => logger.error(e));
-		// Tools removed: skipping tools indexes
+	/**
+	 * Find documents matching a filter
+	 */
+	async find(filter: MongoFilter = {}, options: FindOptions = {}): Promise<T[]> {
+		const client = await this.pool.connect();
+		try {
+			const { whereClause, values } = this.buildWhereClause(filter);
+			let query = `SELECT * FROM ${this.tableName}`;
 
-		conversations
-			.createIndex({
-				"messages.from": 1,
-				createdAt: 1,
-			})
-			.catch((e) => logger.error(e));
+			if (whereClause) {
+				query += ` WHERE ${whereClause}`;
+			}
 
-		conversations
-			.createIndex({
-				userId: 1,
-				sessionId: 1,
-			})
-			.catch((e) => logger.error(e));
+			if (options.sort) {
+				const sortClauses = Object.entries(options.sort)
+					.map(([key, dir]) => `${this.toSnakeCase(key)} ${dir === -1 ? "DESC" : "ASC"}`)
+					.join(", ");
+				query += ` ORDER BY ${sortClauses}`;
+			}
 
-		config.createIndex({ key: 1 }, { unique: true }).catch((e) => logger.error(e));
+			if (options.limit) {
+				query += ` LIMIT ${options.limit}`;
+			}
+
+			if (options.skip) {
+				query += ` OFFSET ${options.skip}`;
+			}
+
+			const result = await client.query(query, values);
+			return result.rows.map((row) => this.rowToDocument(row));
+		} finally {
+			client.release();
+		}
+	}
+
+	/**
+	 * Find one document matching a filter
+	 */
+	async findOne(filter: MongoFilter = {}): Promise<T | null> {
+		const results = await this.find(filter, { limit: 1 });
+		return results[0] || null;
+	}
+
+	/**
+	 * Insert a single document
+	 */
+	async insertOne(document: Partial<T>): Promise<{ insertedId: string }> {
+		const client = await this.pool.connect();
+		try {
+			const doc = this.documentToRow(document);
+			const columns = Object.keys(doc);
+			const values = Object.values(doc);
+			const placeholders = values.map((_, i) => `$${i + 1}`).join(", ");
+
+			const query = `INSERT INTO ${this.tableName} (${columns.join(", ")}) VALUES (${placeholders}) RETURNING id`;
+			const result = await client.query(query, values);
+			return { insertedId: result.rows[0].id };
+		} finally {
+			client.release();
+		}
+	}
+
+	/**
+	 * Insert multiple documents
+	 */
+	async insertMany(documents: Partial<T>[]): Promise<{ insertedIds: string[] }> {
+		const insertedIds: string[] = [];
+		for (const doc of documents) {
+			const result = await this.insertOne(doc);
+			insertedIds.push(result.insertedId);
+		}
+		return { insertedIds };
+	}
+
+	/**
+	 * Update documents matching a filter
+	 */
+	async updateOne(
+		filter: MongoFilter,
+		update: UpdateQuery,
+		_options: UpdateOptions = {}
+	): Promise<{ modifiedCount: number }> {
+		const client = await this.pool.connect();
+		try {
+			const { whereClause, values: whereValues } = this.buildWhereClause(filter);
+			const updateDoc = update.$set || update;
+			const updateRow = this.documentToRow(updateDoc, true);
+
+			const setClauses: string[] = [];
+			const setValues: unknown[] = [];
+			let paramIndex = whereValues.length + 1;
+
+			Object.entries(updateRow).forEach(([key, value]) => {
+				setClauses.push(`${key} = $${paramIndex}`);
+				setValues.push(value);
+				paramIndex++;
+			});
+
+			let query = `UPDATE ${this.tableName} SET ${setClauses.join(", ")}`;
+			if (whereClause) {
+				query += ` WHERE ${whereClause}`;
+			}
+
+			const result = await client.query(query, [...whereValues, ...setValues]);
+			return { modifiedCount: result.rowCount || 0 };
+		} finally {
+			client.release();
+		}
+	}
+
+	/**
+	 * Update multiple documents matching a filter
+	 */
+	async updateMany(filter: MongoFilter, update: UpdateQuery): Promise<{ modifiedCount: number }> {
+		return this.updateOne(filter, update);
+	}
+
+	/**
+	 * Delete documents matching a filter
+	 */
+	async deleteOne(filter: MongoFilter): Promise<{ deletedCount: number }> {
+		const client = await this.pool.connect();
+		try {
+			const { whereClause, values } = this.buildWhereClause(filter);
+			let query = `DELETE FROM ${this.tableName}`;
+			if (whereClause) {
+				query += ` WHERE ${whereClause}`;
+			}
+			query += ` LIMIT 1`;
+
+			const result = await client.query(query, values);
+			return { deletedCount: result.rowCount || 0 };
+		} finally {
+			client.release();
+		}
+	}
+
+	/**
+	 * Delete multiple documents matching a filter
+	 */
+	async deleteMany(filter: MongoFilter): Promise<{ deletedCount: number }> {
+		const client = await this.pool.connect();
+		try {
+			const { whereClause, values } = this.buildWhereClause(filter);
+			let query = `DELETE FROM ${this.tableName}`;
+			if (whereClause) {
+				query += ` WHERE ${whereClause}`;
+			}
+
+			const result = await client.query(query, values);
+			return { deletedCount: result.rowCount || 0 };
+		} finally {
+			client.release();
+		}
+	}
+
+	/**
+	 * Count documents matching a filter
+	 */
+	async countDocuments(filter: MongoFilter = {}): Promise<number> {
+		const client = await this.pool.connect();
+		try {
+			const { whereClause, values } = this.buildWhereClause(filter);
+			let query = `SELECT COUNT(*) FROM ${this.tableName}`;
+			if (whereClause) {
+				query += ` WHERE ${whereClause}`;
+			}
+
+			const result = await client.query(query, values);
+			return parseInt(result.rows[0].count, 10);
+		} finally {
+			client.release();
+		}
+	}
+
+	/**
+	 * Create index (no-op for PostgreSQL as indexes are in schema)
+	 */
+	async createIndex(
+		_keys: Record<string, unknown>,
+		_options: Record<string, unknown> = {}
+	): Promise<string> {
+		// Indexes are created in SQL schema, this is a no-op for compatibility
+		return "index_created_in_schema";
+	}
+
+	/**
+	 * Build WHERE clause from MongoDB-style filter
+	 */
+	private buildWhereClause(filter: MongoFilter): { whereClause: string; values: unknown[] } {
+		const clauses: string[] = [];
+		const values: unknown[] = [];
+		let paramIndex = 1;
+
+		for (const [key, value] of Object.entries(filter)) {
+			const columnName = this.toSnakeCase(key);
+
+			if (value && typeof value === "object" && !Array.isArray(value)) {
+				// Handle operators
+				const objValue = value as Record<string, unknown>;
+				if (objValue.$exists !== undefined) {
+					clauses.push(`${columnName} IS ${objValue.$exists ? "NOT NULL" : "NULL"}`);
+				} else if (objValue.$in) {
+					const inValues = objValue.$in as unknown[];
+					const placeholders = inValues.map(() => `$${paramIndex++}`).join(", ");
+					clauses.push(`${columnName} IN (${placeholders})`);
+					values.push(...inValues);
+				} else if (objValue.$gt !== undefined) {
+					clauses.push(`${columnName} > $${paramIndex++}`);
+					values.push(objValue.$gt);
+				} else if (objValue.$gte !== undefined) {
+					clauses.push(`${columnName} >= $${paramIndex++}`);
+					values.push(objValue.$gte);
+				} else if (objValue.$lt !== undefined) {
+					clauses.push(`${columnName} < $${paramIndex++}`);
+					values.push(objValue.$lt);
+				} else if (objValue.$lte !== undefined) {
+					clauses.push(`${columnName} <= $${paramIndex++}`);
+					values.push(objValue.$lte);
+				} else if (objValue.$ne !== undefined) {
+					clauses.push(`${columnName} != $${paramIndex++}`);
+					values.push(objValue.$ne);
+				}
+			} else {
+				clauses.push(`${columnName} = $${paramIndex++}`);
+				values.push(value);
+			}
+		}
+
+		return {
+			whereClause: clauses.join(" AND "),
+			values,
+		};
+	}
+
+	/**
+	 * Convert camelCase to snake_case
+	 */
+	private toSnakeCase(str: string): string {
+		// Handle _id specially
+		if (str === "_id") return "id";
+		return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+	}
+
+	/**
+	 * Convert snake_case to camelCase
+	 */
+	private toCamelCase(str: string): string {
+		if (str === "id") return "_id";
+		return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+	}
+
+	/**
+	 * Convert database row to document format
+	 */
+	private rowToDocument(row: Record<string, unknown>): T {
+		const doc: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(row)) {
+			const camelKey = this.toCamelCase(key);
+			doc[camelKey] = value;
+		}
+		return doc as T;
+	}
+
+	/**
+	 * Convert document to database row format
+	 */
+	private documentToRow(
+		doc: Partial<T> | Record<string, unknown>,
+		isUpdate = false
+	): Record<string, unknown> {
+		const row: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(doc)) {
+			if (key === "_id" && !isUpdate) continue; // Skip _id on insert
+			const snakeKey = this.toSnakeCase(key);
+			row[snakeKey] = value;
+		}
+		return row;
+	}
+
+	/**
+	 * Aggregate (simplified implementation)
+	 */
+	async aggregate(_pipeline: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+		// This is a simplified implementation
+		// Complex aggregations need to be handled on a case-by-case basis
+		logger.warn("Aggregate is not fully implemented for PostgreSQL adapter");
+		return [];
+	}
+}
+
+/**
+ * PostgreSQL File Bucket Adapter to mimic GridFS
+ */
+export class PostgresFileBucket {
+	constructor(private pool: Pool) {}
+
+	async uploadFromStream(filename: string, stream: NodeJS.ReadableStream): Promise<string> {
+		const chunks: Buffer[] = [];
+		for await (const chunk of stream) {
+			chunks.push(chunk as Buffer);
+		}
+		const buffer = Buffer.concat(chunks);
+
+		const client = await this.pool.connect();
+		try {
+			const query = `INSERT INTO files (filename, data, size) VALUES ($1, $2, $3) RETURNING id`;
+			const result = await client.query(query, [filename, buffer, buffer.length]);
+			return result.rows[0].id;
+		} finally {
+			client.release();
+		}
+	}
+
+	async openDownloadStream(fileId: string): Promise<Buffer> {
+		const client = await this.pool.connect();
+		try {
+			const query = `SELECT data FROM files WHERE id = $1`;
+			const result = await client.query(query, [fileId]);
+			if (result.rows.length === 0) {
+				throw new Error("File not found");
+			}
+			return result.rows[0].data as Buffer;
+		} finally {
+			client.release();
+		}
+	}
+
+	async delete(fileId: string): Promise<void> {
+		const client = await this.pool.connect();
+		try {
+			const query = `DELETE FROM files WHERE id = $1`;
+			await client.query(query, [fileId]);
+		} finally {
+			client.release();
+		}
 	}
 }
 

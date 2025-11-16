@@ -1,7 +1,7 @@
 import { Elysia, error, t } from "elysia";
 import { authPlugin } from "$api/authPlugin";
 import { collections } from "$lib/server/database";
-import { ObjectId } from "mongodb";
+import { ObjectId } from "$lib/types/ObjectId";
 import { authCondition } from "$lib/server/auth";
 import { validModelIdSchema } from "$lib/server/models";
 import { convertLegacyConversation } from "$lib/utils/tree/convertLegacyConversation";

@@ -1,4 +1,4 @@
-import type { ObjectId } from "mongodb";
+import type { ObjectId } from "./ObjectId";
 import type { User } from "./User";
 import type { Assistant } from "./Assistant";
 import type { Timestamps } from "./Timestamps";

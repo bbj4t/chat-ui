@@ -8,7 +8,7 @@ import type {
 import { z } from "zod";
 import { endpointOAIParametersSchema, endpointOai } from "./openai/endpointOai";
 import type { Model } from "$lib/types/Model";
-import type { ObjectId } from "mongodb";
+import type { ObjectId } from "$lib/types/ObjectId";
 
 export type EndpointMessage = Omit<Message, "id">;
 
