@@ -1,7 +1,7 @@
 import { Elysia, error, t } from "elysia";
 import { authPlugin } from "$api/authPlugin";
 import { collections } from "$lib/server/database";
-import { ObjectId } from "$lib/types/ObjectId";
+import type { ObjectId } from "$lib/types/ObjectId";
 import { authCondition } from "$lib/server/auth";
 import { validModelIdSchema } from "$lib/server/models";
 import { convertLegacyConversation } from "$lib/utils/tree/convertLegacyConversation";
@@ -23,23 +23,17 @@ export const conversationGroup = new Elysia().use(authPlugin).group("/conversati
 			.get(
 				"",
 				async ({ locals, query }) => {
-					const convs = await collections.conversations
-						.find(authCondition(locals))
-						.project<Pick<Conversation, "_id" | "title" | "updatedAt" | "model">>({
-							title: 1,
-							updatedAt: 1,
-							model: 1,
-						})
-						.sort({ updatedAt: -1 })
-						.skip((query.p ?? 0) * CONV_NUM_PER_PAGE)
-						.limit(CONV_NUM_PER_PAGE)
-						.toArray();
+					const convs = await collections.conversations.find(authCondition(locals), {
+						sort: { updatedAt: -1 },
+						skip: (query.p ?? 0) * CONV_NUM_PER_PAGE,
+						limit: CONV_NUM_PER_PAGE,
+					});
 
 					const nConversations = await collections.conversations.countDocuments(
 						authCondition(locals)
 					);
 
-					const res = convs.map((conv) => ({
+					const res = convs.map((conv: Conversation) => ({
 						_id: conv._id,
 						id: conv._id, // legacy param iOS
 						title: conv.title,

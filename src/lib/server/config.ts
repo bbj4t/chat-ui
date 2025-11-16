@@ -63,8 +63,8 @@ class ConfigManager {
 
 	async updateConfig() {
 		const configs = (await this.configCollection?.find({})) ?? [];
-		this.keysFromDB = configs.reduce<Record<ConfigKey, string>>(
-			(acc, curr) => {
+		this.keysFromDB = configs.reduce(
+			(acc: Record<ConfigKey, string>, curr: { key: string; value: string }) => {
 				acc[curr.key as ConfigKey] = curr.value;
 				return acc;
 			},

@@ -1,5 +1,5 @@
 import { collections } from "$lib/server/database";
-import { ObjectId } from "mongodb";
+import { generateObjectId, type ObjectId } from "$lib/types/ObjectId";
 import type { Semaphores } from "$lib/types/Semaphore";
 
 /**
@@ -7,7 +7,7 @@ import type { Semaphores } from "$lib/types/Semaphore";
  */
 export async function acquireLock(key: Semaphores | string): Promise<ObjectId | false> {
 	try {
-		const id = new ObjectId();
+		const id = generateObjectId();
 
 		const insert = await collections.semaphores.insertOne({
 			_id: id,
@@ -17,7 +17,7 @@ export async function acquireLock(key: Semaphores | string): Promise<ObjectId | 
 			deleteAt: new Date(Date.now() + 1000 * 60 * 3), // 3 minutes
 		});
 
-		return insert.acknowledged ? id : false; // true if the document was inserted
+		return insert.insertedId ? id : false; // true if the document was inserted
 	} catch (e) {
 		// unique index violation, so there must already be a lock
 		return false;
@@ -52,5 +52,5 @@ export async function refreshLock(key: Semaphores | string, lockId: ObjectId): P
 		}
 	);
 
-	return result.matchedCount > 0;
+	return result.modifiedCount > 0;
 }
