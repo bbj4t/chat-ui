@@ -98,6 +98,7 @@ The build process attempts to connect to external APIs at build time:
 **After Fix:** 6 vulnerabilities (0 critical, 0 high, 0 moderate, 6 low)
 
 **Actions Taken:**
+
 - Applied `npm audit fix` to address 5 critical/moderate vulnerabilities
 - Updated the following packages:
   - `devalue` - Fixed prototype pollution
@@ -111,6 +112,7 @@ The build process attempts to connect to external APIs at build time:
 **6 low severity issues remain:**
 
 1. **cookie (Low - downgraded from High)**
+
    - Issue: Accepts cookie name/path/domain with out of bounds characters
    - Advisory: GHSA-pxg6-pf52-xh8x
    - Note: Fix requires `@sveltejs/kit` update (breaking change)
@@ -118,7 +120,7 @@ The build process attempts to connect to external APIs at build time:
    - Advisory: GHSA-5j98-mcp5-4vw2
    - Fix: `npm audit fix`
 
-4. **devalue (Moderate)**
+2. **devalue (Moderate)**
 
    - Issue: Prototype pollution vulnerability
 
