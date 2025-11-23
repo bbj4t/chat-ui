@@ -23,9 +23,9 @@ Chat UI is a SvelteKit-based chat interface for Large Language Models (LLMs) tha
 
 ### Technology Stack
 
-- **Framework:** SvelteKit 2.21.1 (Svelte 5.33.3)
+- **Framework:** SvelteKit 2.49.0 (Svelte 5.33.3)
 - **Language:** TypeScript 5.5.0
-- **Build Tool:** Vite 6.3.5
+- **Build Tool:** Vite 6.4.1
 - **Database:** MongoDB 5.8.0
 - **Styling:** TailwindCSS 3.4.0 with Tailwind Typography
 - **Testing:** Vitest 3.1.4 with Playwright browser support
@@ -111,18 +111,16 @@ The build process attempts to connect to external APIs at build time:
 
 **6 low severity issues remain:**
 
-1. **cookie (Low - downgraded from High)**
+All remaining vulnerabilities are tied to the `cookie` package dependency chain through `@sveltejs/kit`:
 
+1. **cookie package (Low severity)**
    - Issue: Accepts cookie name/path/domain with out of bounds characters
    - Advisory: GHSA-pxg6-pf52-xh8x
-   - Note: Fix requires `@sveltejs/kit` update (breaking change)
-   - Recommendation: Monitor for SvelteKit update that addresses this
-   - Advisory: GHSA-5j98-mcp5-4vw2
-   - Fix: `npm audit fix`
+   - Impact: Low severity - requires specific attack conditions
+   - Resolution: Requires `@sveltejs/kit` update (would be breaking change to force-upgrade)
+   - Recommendation: Monitor for SvelteKit update that addresses this dependency
 
-2. **devalue (Moderate)**
-
-   - Issue: Prototype pollution vulnerability
+**Note:** The remaining issues are all transitive dependencies through the framework and pose minimal risk in typical usage scenarios.
 
 ### Recommended Actions
 
